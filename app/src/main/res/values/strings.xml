@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Alarma BLE</string>
+    <string name="settings">Configuración</string>
+    <string name="connected">Conectado</string>
+    <string name="disconnected">Desconectado</string>
+    <string name="locked">Bloqueado</string>
+    <string name="unlocked">Desbloqueado</string>
+    <string name="lock">Bloquear</string>
+    <string name="unlock">Desbloquear</string>
+    <string name="scan_devices">Escanear Dispositivos</string>
+    <string name="stop_scan">Detener Escaneo</string>
+    <string name="save">Guardar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="ble_password">Contraseña BLE</string>
+    <string name="ble_devices">Dispositivos BLE</string>
+    <string name="permissions_required">Esta aplicación requiere permisos de Bluetooth para funcionar.</string>
+    <string name="request_permissions">Solicitar Permisos</string>
+    <string name="bluetooth_disabled">Bluetooth está desactivado. Por favor, actívalo para continuar.</string>
+    <string name="enable_bluetooth">Activar Bluetooth</string>
+</resources>
