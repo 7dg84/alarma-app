@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.SwitchLeft
+import androidx.compose.material.icons.filled.SwitchRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -21,13 +24,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.ui.unit.dp
 import com.example.alarmaapp.ui.theme.LockedRed
 import com.example.alarmaapp.ui.theme.UnlockedGreen
 
 @Composable
-fun LockButton(
+fun ConnectButton(
     isLocked: Boolean,
     isConnected: Boolean,
     onToggle: () -> Unit,
@@ -38,9 +41,9 @@ fun LockButton(
         modifier = modifier
             .fillMaxWidth(),
         shape = CircleShape,
-        enabled = isConnected,
+        enabled = !isConnected,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isLocked) LockedRed else UnlockedGreen,
+            containerColor = if (isConnected) LockedRed else UnlockedGreen,
             disabledContainerColor = Color.Gray
         ),
         contentPadding = PaddingValues(24.dp)
@@ -50,14 +53,14 @@ fun LockButton(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                contentDescription = if (isLocked) "Bloqueado" else "Desbloqueado",
+                imageVector = if (isConnected) Icons.Default.SwitchLeft else Icons.Default.SwitchRight,
+                contentDescription = if (isConnected) "Conectar" else "Desconectar",
                 modifier = Modifier.size(64.dp),
                 tint = Color.White
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isLocked) "Bloquear" else "Desbloquear",
+                text = if (isLocked) "Conectar" else "Desconectar",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White
             )

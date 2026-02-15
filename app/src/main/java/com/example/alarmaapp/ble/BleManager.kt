@@ -25,73 +25,73 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 
 class BleManager(private val context: Context) {
-    
-    private val bluetoothManager: BluetoothManager = 
+
+    private val bluetoothManager: BluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private val bleScanner: BluetoothLeScanner? = bluetoothAdapter?.bluetoothLeScanner
-    
+
     private var bluetoothGatt: BluetoothGatt? = null
-    
+
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
-    
+
     private val _statusMessage = MutableStateFlow<String>("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
-    
+
     companion object {
         private const val TAG = "BleManager"
     }
-    
+
     enum class ConnectionState {
         DISCONNECTED,
         CONNECTING,
         CONNECTED,
         DISCONNECTING
     }
-    
+
     fun isBluetoothEnabled(): Boolean {
         return bluetoothAdapter?.isEnabled == true
     }
-    
+
     @SuppressLint("MissingPermission")
     fun scanDevices(): Flow<List<BleDevice>> = callbackFlow {
         val scannedDevices = mutableMapOf<String, BleDevice>()
-        
+
         val scanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device
                 val deviceName = device.name ?: "Unknown"
                 val deviceAddress = device.address
-                
+
                 if (!scannedDevices.containsKey(deviceAddress)) {
                     scannedDevices[deviceAddress] = BleDevice(deviceName, deviceAddress)
                     trySend(scannedDevices.values.toList())
                 }
             }
-            
+
             override fun onScanFailed(errorCode: Int) {
                 Log.e(TAG, "Scan failed with error: $errorCode")
             }
         }
-        
+
         // Set up scan filters to look for our service UUID
         val scanFilters = listOf(
             ScanFilter.Builder()
                 .setServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
                 .build()
         )
-        
+
         val scanSettings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
-        
+
         try {
             bleScanner?.startScan(scanFilters, scanSettings, scanCallback)
         } catch (e: SecurityException) {
             Log.e(TAG, "Missing permissions for BLE scan", e)
         }
-        
+
         awaitClose {
             try {
                 bleScanner?.stopScan(scanCallback)
@@ -100,7 +100,7 @@ class BleManager(private val context: Context) {
             }
         }
     }
-    
+
     @SuppressLint("MissingPermission")
     fun connect(deviceAddress: String) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
@@ -108,12 +108,12 @@ class BleManager(private val context: Context) {
             Log.e(TAG, "Device not found")
             return
         }
-        
+
         _connectionState.value = ConnectionState.CONNECTING
-        
+
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
     }
-    
+
     @SuppressLint("MissingPermission")
     fun disconnect() {
         _connectionState.value = ConnectionState.DISCONNECTING
@@ -122,7 +122,7 @@ class BleManager(private val context: Context) {
         bluetoothGatt = null
         _connectionState.value = ConnectionState.DISCONNECTED
     }
-    
+
     @SuppressLint("MissingPermission")
     fun sendCommand(command: String) {
         val gatt = bluetoothGatt
@@ -130,41 +130,41 @@ class BleManager(private val context: Context) {
             Log.e(TAG, "GATT is null, cannot send command")
             return
         }
-        
+
         val service = gatt.getService(BleConstants.SERVICE_UUID)
         if (service == null) {
             Log.e(TAG, "Service not found")
             return
         }
-        
+
         val characteristic = service.getCharacteristic(BleConstants.CHARACTERISTIC_UUID_RX)
         if (characteristic == null) {
             Log.e(TAG, "RX characteristic not found")
             return
         }
-        
+
         val data = command.toByteArray(Charsets.UTF_8)
         characteristic.value = data
-        
+
         val success = gatt.writeCharacteristic(characteristic)
         if (!success) {
             Log.e(TAG, "Failed to write characteristic")
         }
     }
-    
+
     @SuppressLint("MissingPermission")
     private fun enableNotifications(characteristic: BluetoothGattCharacteristic) {
         val gatt = bluetoothGatt ?: return
-        
+
         gatt.setCharacteristicNotification(characteristic, true)
-        
+
         val descriptor = characteristic.getDescriptor(BleConstants.CLIENT_CHARACTERISTIC_CONFIG_UUID)
         if (descriptor != null) {
             descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             gatt.writeDescriptor(descriptor)
         }
     }
-    
+
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -180,12 +180,12 @@ class BleManager(private val context: Context) {
                 }
             }
         }
-        
+
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Services discovered")
-                
+
                 val service = gatt.getService(BleConstants.SERVICE_UUID)
                 if (service != null) {
                     val statusCharacteristic = service.getCharacteristic(BleConstants.CHARACTERISTIC_UUID_STATUS)
@@ -197,7 +197,7 @@ class BleManager(private val context: Context) {
                 Log.w(TAG, "onServicesDiscovered received: $status")
             }
         }
-        
+
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic

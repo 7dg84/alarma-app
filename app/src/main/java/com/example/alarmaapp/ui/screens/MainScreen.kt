@@ -8,7 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.alarmaapp.ui.components.ConnectionStatus
 import com.example.alarmaapp.ui.components.LockButton
+import com.example.alarmaapp.ui.components.ConnectButton
 import com.example.alarmaapp.ui.components.SettingsDialog
 import com.example.alarmaapp.utils.PermissionsManager
 import com.example.alarmaapp.viewmodel.BleViewModel
@@ -125,7 +128,8 @@ fun MainScreen(
                     MainContent(
                         isLocked = uiState.isLocked,
                         isConnected = uiState.isConnected,
-                        onToggleLock = { viewModel.toggleLock() }
+                        onToggleLock = { viewModel.toggleLock() },
+                        onConnect = {viewModel.connectToSavedDevice()}
                     )
                 }
             }
@@ -161,13 +165,21 @@ fun MainScreen(
 fun MainContent(
     isLocked: Boolean,
     isConnected: Boolean,
-    onToggleLock: () -> Unit
+    onToggleLock: () -> Unit,
+    onConnect: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
+//        TODO: colocar los elementos en cuadricula
+        ConnectButton(
+            isLocked = isLocked,
+            isConnected = isConnected,
+            onToggle = onConnect
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         LockButton(
             isLocked = isLocked,
             isConnected = isConnected,

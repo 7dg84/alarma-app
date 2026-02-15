@@ -32,7 +32,8 @@ class BleRepository(context: Context) {
     }
     
     fun connect(deviceAddress: String) {
-        bleManager.connect(deviceAddress)
+        val savedPin = getSavedPassword()
+        bleManager.connect(deviceAddress, savedPin)
     }
     
     fun disconnect() {
