@@ -39,6 +39,8 @@ class BleManager(private val context: Context) {
     private val _statusMessage = MutableStateFlow<String>("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
+    val aes = AES()
+
     companion object {
         private const val TAG = "BleManager"
     }
@@ -102,7 +104,7 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun connect(deviceAddress: String) {
+    fun connect(deviceAddress: String, savedPin: String) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
         if (device == null) {
             Log.e(TAG, "Device not found")
@@ -144,7 +146,7 @@ class BleManager(private val context: Context) {
         }
 
         val data = command.toByteArray(Charsets.UTF_8)
-        characteristic.value = data
+        characteristic.value = aes.aesEncrypt(data, aes.secretKeyFromString("abcdefghijklmnop"))
 
         val success = gatt.writeCharacteristic(characteristic)
         if (!success) {
@@ -171,8 +173,13 @@ class BleManager(private val context: Context) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i(TAG, "Connected to GATT server")
-                    _connectionState.value = ConnectionState.CONNECTED
-                    gatt.discoverServices()
+                    // Paring
+                    if (gatt.device.bondState == BluetoothDevice.BOND_NONE) {
+                        gatt.device.createBond() // Start Paring
+                    } else if (gatt.device.bondState == BluetoothDevice.BOND_BONDED) {
+                        _connectionState.value = ConnectionState.CONNECTED
+                        gatt.discoverServices() // Paring Complete
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
@@ -204,7 +211,8 @@ class BleManager(private val context: Context) {
         ) {
             if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_STATUS) {
                 val value = characteristic.value
-                val message = String(value, Charsets.UTF_8)
+//                Decrypt yhe value
+                val message = String(aes.aesDecrypt(value, aes.secretKeyFromString("abcdefghijklmnop")), Charsets.UTF_8)
                 Log.i(TAG, "Status message received: $message")
                 _statusMessage.value = message
             }
