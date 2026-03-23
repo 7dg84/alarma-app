@@ -31,7 +31,6 @@ import com.example.alarmaapp.ui.theme.UnlockedGreen
 
 @Composable
 fun ConnectButton(
-    isLocked: Boolean,
     isConnected: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
@@ -41,7 +40,7 @@ fun ConnectButton(
         modifier = modifier
             .fillMaxWidth(),
         shape = CircleShape,
-        enabled = !isConnected,
+        enabled = true,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (isConnected) LockedRed else UnlockedGreen,
             disabledContainerColor = Color.Gray
@@ -54,13 +53,13 @@ fun ConnectButton(
         ) {
             Icon(
                 imageVector = if (isConnected) Icons.Default.SwitchLeft else Icons.Default.SwitchRight,
-                contentDescription = if (isConnected) "Conectar" else "Desconectar",
+                contentDescription = if (!isConnected) "Conectar" else "Desconectar",
                 modifier = Modifier.size(64.dp),
                 tint = Color.White
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isLocked) "Conectar" else "Desconectar",
+                text = if (!isConnected) "Conectar" else "Desconectar",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White
             )

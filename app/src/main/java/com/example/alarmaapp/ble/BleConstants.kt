@@ -10,7 +10,7 @@ object BleConstants {
     val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     
     // Default PIN
-    const val DEFAULT_PIN = "123456"
+    const val DEFAULT_KEY = "abcdefghijklmnop"
     
     // Scan timeout
     const val SCAN_TIMEOUT_MS = 10000L
@@ -19,6 +19,6 @@ object BleConstants {
     const val COMMAND_TOGGLE = "1"
     
     // Status messages
-    const val STATUS_LOCKED = "Moto bloqueada."
-    const val STATUS_UNLOCKED = "Moto desbloqueada."
+    const val STATUS_LOCKED = "bloqueada."
+    const val STATUS_UNLOCKED = "desbloqueada."
 }

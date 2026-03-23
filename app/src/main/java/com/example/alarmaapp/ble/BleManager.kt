@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 
-class BleManager(private val context: Context) {
+class BleManager(private val context: Context, aesKey: String) {
 
     private val bluetoothManager: BluetoothManager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -38,8 +38,9 @@ class BleManager(private val context: Context) {
 
     private val _statusMessage = MutableStateFlow<String>("")
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
+    val statusAlarm = StatusAlarm(locked = true, lastNotified = false)
 
-    val aes = AES()
+    val aes = AES(aesKey)
 
     companion object {
         private const val TAG = "BleManager"
@@ -50,6 +51,24 @@ class BleManager(private val context: Context) {
         CONNECTING,
         CONNECTED,
         DISCONNECTING
+    }
+
+    data class StatusAlarm(
+        var locked: Boolean,
+        var lastNotified: Boolean
+    ) {
+        fun parseStatus(decrypted: String) {
+            try {
+                val parts = decrypted.trim().split(",")
+
+                locked = parts[0] == "1"
+                lastNotified = parts[0] == "1"
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parsing status: $decrypted")
+
+            }
+        }
     }
 
     fun isBluetoothEnabled(): Boolean {
@@ -104,7 +123,7 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun connect(deviceAddress: String, savedPin: String) {
+    fun connect(deviceAddress: String) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
         if (device == null) {
             Log.e(TAG, "Device not found")
@@ -146,7 +165,7 @@ class BleManager(private val context: Context) {
         }
 
         val data = command.toByteArray(Charsets.UTF_8)
-        characteristic.value = aes.aesEncrypt(data, aes.secretKeyFromString("abcdefghijklmnop"))
+        characteristic.value = aes.aesEncrypt(data)
 
         val success = gatt.writeCharacteristic(characteristic)
         if (!success) {
@@ -212,9 +231,10 @@ class BleManager(private val context: Context) {
             if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_STATUS) {
                 val value = characteristic.value
 //                Decrypt yhe value
-                val message = String(aes.aesDecrypt(value, aes.secretKeyFromString("abcdefghijklmnop")), Charsets.UTF_8)
+                val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
+                statusAlarm.parseStatus(message)
                 Log.i(TAG, "Status message received: $message")
-                _statusMessage.value = message
+                _statusMessage.value = if (statusAlarm.locked)  "Bloqueada." else "Desbloqueada"
             }
         }
     }

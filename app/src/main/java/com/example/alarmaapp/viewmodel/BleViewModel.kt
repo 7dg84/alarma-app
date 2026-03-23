@@ -24,17 +24,17 @@ data class BleUiState(
     val scannedDevices: List<BleDevice> = emptyList(),
     val savedDeviceAddress: String? = null,
     val savedDeviceName: String? = null,
-    val savedPassword: String = BleConstants.DEFAULT_PIN,
+    val savedAESKey: String = BleConstants.DEFAULT_KEY,
     val hasBluetoothPermissions: Boolean = false,
     val isBluetoothEnabled: Boolean = false,
     val errorMessage: String? = null
 )
 
 class BleViewModel(application: Application) : AndroidViewModel(application) {
-    
-    private val repository = BleRepository(application)
-    
+
     private val _uiState = MutableStateFlow(BleUiState())
+
+    private val repository = BleRepository(application, _uiState.value.savedAESKey)
     val uiState: StateFlow<BleUiState> = _uiState.asStateFlow()
     
     private var scanJob: Job? = null
@@ -51,7 +51,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
                 savedDeviceAddress = repository.getSavedDeviceAddress(),
                 savedDeviceName = repository.getSavedDeviceName(),
-                savedPassword = repository.getSavedPassword()
+                savedAESKey = repository.getSavedPassword()
             )
         }
     }
@@ -81,7 +81,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.statusMessage.collect { message ->
                 if (message.isNotEmpty()) {
-                    val isLocked = message.contains("bloqueada", ignoreCase = true)
+                    val isLocked = repository.statusAlarm.locked
                     _uiState.update { state ->
                         state.copy(
                             statusMessage = message,
@@ -132,7 +132,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
                 savedDeviceAddress = device.address,
                 savedDeviceName = device.name,
-                savedPassword = password
+                savedAESKey = password
             )
         }
     }
@@ -147,6 +147,8 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnect() {
         repository.disconnect()
     }
+
+    fun toggleConnect() {}
     
     fun toggleLock() {
         repository.sendToggleCommand()

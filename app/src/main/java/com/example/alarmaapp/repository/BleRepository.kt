@@ -8,9 +8,9 @@ import com.example.alarmaapp.ble.BleManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
-class BleRepository(context: Context) {
+class BleRepository(context: Context, aesKey: String) {
     
-    private val bleManager = BleManager(context)
+    private val bleManager = BleManager(context, aesKey)
     private val sharedPreferences: SharedPreferences = 
         context.getSharedPreferences("AlarmaAppPrefs", Context.MODE_PRIVATE)
     
@@ -21,6 +21,7 @@ class BleRepository(context: Context) {
     }
     
     val connectionState: StateFlow<BleManager.ConnectionState> = bleManager.connectionState
+    val statusAlarm = bleManager.statusAlarm
     val statusMessage: StateFlow<String> = bleManager.statusMessage
     
     fun isBluetoothEnabled(): Boolean {
@@ -32,8 +33,7 @@ class BleRepository(context: Context) {
     }
     
     fun connect(deviceAddress: String) {
-        val savedPin = getSavedPassword()
-        bleManager.connect(deviceAddress, savedPin)
+        bleManager.connect(deviceAddress)
     }
     
     fun disconnect() {
@@ -62,6 +62,6 @@ class BleRepository(context: Context) {
     }
     
     fun getSavedPassword(): String {
-        return sharedPreferences.getString(KEY_PASSWORD, BleConstants.DEFAULT_PIN) ?: BleConstants.DEFAULT_PIN
+        return sharedPreferences.getString(KEY_PASSWORD, BleConstants.DEFAULT_KEY) ?: BleConstants.DEFAULT_KEY
     }
 }

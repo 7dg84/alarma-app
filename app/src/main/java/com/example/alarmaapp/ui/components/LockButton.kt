@@ -40,7 +40,7 @@ fun LockButton(
         shape = CircleShape,
         enabled = isConnected,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isLocked) LockedRed else UnlockedGreen,
+            containerColor = if (!isLocked) LockedRed else UnlockedGreen,
             disabledContainerColor = Color.Gray
         ),
         contentPadding = PaddingValues(24.dp)
@@ -50,14 +50,14 @@ fun LockButton(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                contentDescription = if (isLocked) "Bloqueado" else "Desbloqueado",
+                imageVector = if (!isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                contentDescription = if (!isLocked) "Bloqueado" else "Desbloqueado",
                 modifier = Modifier.size(64.dp),
                 tint = Color.White
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isLocked) "Bloquear" else "Desbloquear",
+                text = if (!isLocked) "Bloquear" else "Desbloquear",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White
             )

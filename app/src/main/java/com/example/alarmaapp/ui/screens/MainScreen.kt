@@ -14,14 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -129,7 +127,10 @@ fun MainScreen(
                         isLocked = uiState.isLocked,
                         isConnected = uiState.isConnected,
                         onToggleLock = { viewModel.toggleLock() },
-                        onConnect = {viewModel.connectToSavedDevice()}
+                        onConnect = {if (uiState.isConnected) viewModel.disconnect() else {
+                            if (!permissionsState.allPermissionsGranted) permissionsState.launchMultiplePermissionRequest()
+                            viewModel.connectToSavedDevice()
+                        }}
                     )
                 }
             }
@@ -141,7 +142,7 @@ fun MainScreen(
             isScanning = uiState.isScanning,
             scannedDevices = uiState.scannedDevices,
             savedDeviceAddress = uiState.savedDeviceAddress,
-            savedPassword = uiState.savedPassword,
+            savedPassword = uiState.savedAESKey,
             onDismiss = { 
                 viewModel.stopScan()
                 showSettingsDialog = false 
@@ -175,7 +176,6 @@ fun MainContent(
     ) {
 //        TODO: colocar los elementos en cuadricula
         ConnectButton(
-            isLocked = isLocked,
             isConnected = isConnected,
             onToggle = onConnect
         )
