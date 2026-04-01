@@ -127,10 +127,12 @@ fun MainScreen(
                         isLocked = uiState.isLocked,
                         isConnected = uiState.isConnected,
                         onToggleLock = { viewModel.toggleLock() },
-                        onConnect = {if (uiState.isConnected) viewModel.disconnect() else {
-                            if (!permissionsState.allPermissionsGranted) permissionsState.launchMultiplePermissionRequest()
-                            viewModel.connectToSavedDevice()
-                        }}
+                        onConnect = {
+                            if (uiState.isConnected) viewModel.disconnect() else {
+                                if (!permissionsState.allPermissionsGranted) permissionsState.launchMultiplePermissionRequest()
+                                viewModel.connectToSavedDevice()
+                            }
+                        }
                     )
                 }
             }
