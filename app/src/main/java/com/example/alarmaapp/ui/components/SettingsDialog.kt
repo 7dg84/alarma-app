@@ -46,6 +46,14 @@ fun SettingsDialog(
 ) {
     var password by remember { mutableStateOf(savedPassword) }
     var selectedDevice by remember { mutableStateOf<BleDevice?>(null) }
+
+    // El ESP32 solo puede descifrar AES-128/192/256, es decir claves de
+    // 16, 24 o 32 caracteres. keys.h usa 16 por defecto.
+    val normalizedPassword = password.trim()
+    val isPasswordValid = normalizedPassword.length == 16 ||
+        normalizedPassword.length == 24 ||
+        normalizedPassword.length == 32
+
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -60,9 +68,19 @@ fun SettingsDialog(
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Contraseña BLE") },
+                    label = { Text("Contraseña BLE (clave AES)") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    isError = !isPasswordValid,
+                    supportingText = {
+                        Text(
+                            if (isPasswordValid) {
+                                "Debe coincidir con AES_KEY de keys.h"
+                            } else {
+                                "Usa 16, 24 o 32 caracteres"
+                            }
+                        )
+                    }
                 )
                 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -116,11 +134,11 @@ fun SettingsDialog(
             Button(
                 onClick = {
                     selectedDevice?.let { device ->
-                        onSelectDevice(device, password)
+                        onSelectDevice(device, normalizedPassword)
                     }
                     onDismiss()
                 },
-                enabled = selectedDevice != null
+                enabled = selectedDevice != null && isPasswordValid
             ) {
                 Text("Guardar")
             }

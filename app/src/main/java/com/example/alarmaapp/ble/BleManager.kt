@@ -2,7 +2,6 @@ package com.example.alarmaapp.ble
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
@@ -40,7 +39,13 @@ class BleManager(private val context: Context, aesKey: String) {
     val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
     val statusAlarm = StatusAlarm(locked = true, lastNotified = false)
 
-    val aes = AES(aesKey)
+    @Volatile
+    private var aes = AES(aesKey)
+
+    // Permite cambiar la clave sin reiniciar la app (Ajustes -> Guardar).
+    fun updateAesKey(key: String) {
+        aes = AES(key)
+    }
 
     companion object {
         private const val TAG = "BleManager"
@@ -61,8 +66,8 @@ class BleManager(private val context: Context, aesKey: String) {
             try {
                 val parts = decrypted.trim().split(",")
 
-                locked = parts[0] == "1"
-                lastNotified = parts[0] == "1"
+                locked = parts.getOrNull(0)?.trim() == "1"
+                lastNotified = parts.getOrNull(1)?.trim() == "1"
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing status: $decrypted")
@@ -132,6 +137,8 @@ class BleManager(private val context: Context, aesKey: String) {
 
         _connectionState.value = ConnectionState.CONNECTING
 
+        // Si quedo un GATT de un intento anterior, cerrarlo antes de reconectar.
+        bluetoothGatt?.close()
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
     }
 
@@ -164,12 +171,17 @@ class BleManager(private val context: Context, aesKey: String) {
             return
         }
 
-        val data = command.toByteArray(Charsets.UTF_8)
-        characteristic.value = aes.aesEncrypt(data)
+        try {
+            val data = command.toByteArray(Charsets.UTF_8)
+            characteristic.value = aes.aesEncrypt(data)
 
-        val success = gatt.writeCharacteristic(characteristic)
-        if (!success) {
-            Log.e(TAG, "Failed to write characteristic")
+            val success = gatt.writeCharacteristic(characteristic)
+            if (!success) {
+                Log.e(TAG, "Failed to write characteristic")
+            }
+        } catch (e: Exception) {
+            // Clave AES con longitud invalida (debe tener 16, 24 o 32 caracteres)
+            Log.e(TAG, "No se pudo cifrar/enviar el comando", e)
         }
     }
 
@@ -192,17 +204,16 @@ class BleManager(private val context: Context, aesKey: String) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i(TAG, "Connected to GATT server")
-                    // Paring
-                    if (gatt.device.bondState == BluetoothDevice.BOND_NONE) {
-                        gatt.device.createBond() // Start Paring
-                    } else if (gatt.device.bondState == BluetoothDevice.BOND_BONDED) {
-                        _connectionState.value = ConnectionState.CONNECTED
-                        gatt.discoverServices() // Paring Complete
-                    }
+                    // Descubrir servicios SIEMPRE al conectar. Antes solo se hacia
+                    // si el telefono ya estaba emparejado, por lo que la primera
+                    // conexion se quedaba en "Conectando..." para siempre.
+                    gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
                     _connectionState.value = ConnectionState.DISCONNECTED
+                    bluetoothGatt?.close()
+                    bluetoothGatt = null
                 }
             }
         }
@@ -218,9 +229,14 @@ class BleManager(private val context: Context, aesKey: String) {
                     if (statusCharacteristic != null) {
                         enableNotifications(statusCharacteristic)
                     }
+                    _connectionState.value = ConnectionState.CONNECTED
+                } else {
+                    Log.e(TAG, "Service ${BleConstants.SERVICE_UUID} not found")
+                    _connectionState.value = ConnectionState.DISCONNECTED
                 }
             } else {
                 Log.w(TAG, "onServicesDiscovered received: $status")
+                _connectionState.value = ConnectionState.DISCONNECTED
             }
         }
 
@@ -229,12 +245,16 @@ class BleManager(private val context: Context, aesKey: String) {
             characteristic: BluetoothGattCharacteristic
         ) {
             if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_STATUS) {
-                val value = characteristic.value
-//                Decrypt yhe value
-                val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
-                statusAlarm.parseStatus(message)
-                Log.i(TAG, "Status message received: $message")
-                _statusMessage.value = if (statusAlarm.locked)  "Bloqueada." else "Desbloqueada"
+                try {
+                    val value = characteristic.value
+                    val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
+                    statusAlarm.parseStatus(message)
+                    Log.i(TAG, "Status message received: $message")
+                    _statusMessage.value = if (statusAlarm.locked) "Bloqueada." else "Desbloqueada"
+                } catch (e: Exception) {
+                    // Clave distinta o paquete corrupto: no tumbar la app.
+                    Log.e(TAG, "No se pudo descifrar el estado recibido", e)
+                }
             }
         }
     }

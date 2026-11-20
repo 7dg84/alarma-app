@@ -8,11 +8,29 @@ import com.example.alarmaapp.ble.BleManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
-class BleRepository(context: Context, aesKey: String) {
-    
-    private val bleManager = BleManager(context, aesKey)
-    private val sharedPreferences: SharedPreferences = 
+class BleRepository(context: Context, private val defaultAesKey: String) {
+
+    private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("AlarmaAppPrefs", Context.MODE_PRIVATE)
+
+    // OJO: antes se construia siempre con la clave por defecto, sin leer la
+    // guardada, asi que cambiar la contrasena en Ajustes no tenia efecto.
+    private val bleManager = BleManager(
+        context,
+        normalizeKey(sharedPreferences.getString(KEY_PASSWORD, null))
+    )
+
+    // Una clave guardada de una version anterior puede tener longitud invalida
+    // (p. ej. "123456"). En ese caso usamos la clave por defecto para que la
+    // app siga funcionando con el firmware.
+    private fun normalizeKey(key: String?): String {
+        val candidate = key?.trim().orEmpty()
+        return if (candidate.length == 16 || candidate.length == 24 || candidate.length == 32) {
+            candidate
+        } else {
+            defaultAesKey
+        }
+    }
     
     companion object {
         private const val KEY_DEVICE_ADDRESS = "device_address"
@@ -51,6 +69,7 @@ class BleRepository(context: Context, aesKey: String) {
             putString(KEY_PASSWORD, password)
             apply()
         }
+        bleManager.updateAesKey(password)
     }
     
     fun getSavedDeviceAddress(): String? {
@@ -62,6 +81,6 @@ class BleRepository(context: Context, aesKey: String) {
     }
     
     fun getSavedPassword(): String {
-        return sharedPreferences.getString(KEY_PASSWORD, BleConstants.DEFAULT_KEY) ?: BleConstants.DEFAULT_KEY
+        return normalizeKey(sharedPreferences.getString(KEY_PASSWORD, null))
     }
 }
