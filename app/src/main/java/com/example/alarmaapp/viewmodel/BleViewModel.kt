@@ -2,11 +2,11 @@ package com.example.alarmaapp.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.example.alarmaapp.AlarmaApplication
 import androidx.lifecycle.viewModelScope
 import com.example.alarmaapp.ble.BleConstants
 import com.example.alarmaapp.ble.BleDevice
 import com.example.alarmaapp.ble.BleManager
-import com.example.alarmaapp.repository.BleRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,7 +34,8 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(BleUiState())
 
-    private val repository = BleRepository(application, _uiState.value.savedAESKey)
+    // Misma instancia que usa el widget: la conexion BLE se comparte.
+    private val repository = (application as AlarmaApplication).bleRepository
     val uiState: StateFlow<BleUiState> = _uiState.asStateFlow()
     
     private var scanJob: Job? = null
@@ -138,6 +139,14 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun connectToSavedDevice() {
+        // Evita reconectar si el widget (o la app) ya inicio la conexion.
+        val state = repository.connectionState.value
+        if (state == BleManager.ConnectionState.CONNECTED ||
+            state == BleManager.ConnectionState.CONNECTING
+        ) {
+            return
+        }
+
         val address = _uiState.value.savedDeviceAddress
         if (address != null) {
             repository.connect(address)
@@ -153,9 +162,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleLock() {
         repository.sendToggleCommand()
     }
-    
-    override fun onCleared() {
-        super.onCleared()
-        repository.disconnect()
-    }
+
+    // No desconectar en onCleared(): el widget debe seguir usando la conexion
+    // cuando se cierra o recrea la Activity.
 }

@@ -53,7 +53,26 @@ class BleRepository(context: Context, private val defaultAesKey: String) {
     fun connect(deviceAddress: String) {
         bleManager.connect(deviceAddress)
     }
-    
+
+    // Usado por el widget: conecta al dispositivo ya guardado en Ajustes.
+    fun connectToSavedDevice(): Boolean {
+        val state = connectionState.value
+        if (state == BleManager.ConnectionState.CONNECTED ||
+            state == BleManager.ConnectionState.CONNECTING ||
+            state == BleManager.ConnectionState.DISCONNECTING
+        ) {
+            return false
+        }
+
+        val address = getSavedDeviceAddress() ?: return false
+        bleManager.connect(address)
+        return true
+    }
+
+    fun hasSavedDevice(): Boolean {
+        return getSavedDeviceAddress() != null
+    }
+
     fun disconnect() {
         bleManager.disconnect()
     }

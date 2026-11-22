@@ -18,4 +18,5 @@
     <string name="request_permissions">Solicitar Permisos</string>
     <string name="bluetooth_disabled">Bluetooth está desactivado. Por favor, actívalo para continuar.</string>
     <string name="enable_bluetooth">Activar Bluetooth</string>
+    <string name="widget_description">Conecta y bloquea tu alarma desde la pantalla de inicio</string>
 </resources>
