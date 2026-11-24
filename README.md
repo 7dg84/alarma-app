@@ -69,10 +69,21 @@ alarma-app/
 
 **Características:**
 - **STATUS (Notificación):** `db9ab4aa-da20-4de8-8a08-e14ab7e5148e`
-  - Envía el estado actual: "Moto bloqueada." o "Moto desbloqueada."
+  - Envía el estado cifrado con el formato:
+    `conectado,bloqueado,encendido,arranque,boton1,boton2`
+  - Ejemplo: `1,1,0,0,0,0`
   
 - **RX (Escritura):** `f0bf0a71-0dfa-4d1b-90ae-cfda669a37c0`
-  - Recibe comandos: enviar "1" para cambiar estado
+  - Recibe comandos cifrados:
+    - `1` → alterna bloqueo/desbloqueo (relé)
+    - `2` → alterna encendido (GPIO 14)
+    - `3` / `3u` → arranque presionado / liberado (GPIO 15)
+    - `4` / `4u` → botón 1 presionado / liberado (GPIO 15)
+    - `5` / `5u` → botón 2 presionado / liberado (GPIO 12)
+
+**Botones momentáneos:** mientras el usuario mantiene presionado un botón,
+la app reenvía el comando `down` cada 500 ms. El firmware libera la salida si
+pasa 1.5 s sin recibirlo (por ejemplo, si se cierra la app o se pierde el BLE).
 
 **Seguridad:** Autenticación con PIN estático: `123456`
 
@@ -131,6 +142,11 @@ La aplicación solicita los siguientes permisos:
    - Presionar el botón central grande para cambiar el estado
    - Rojo con candado cerrado: Bloqueado
    - Verde con candado abierto: Desbloqueado
+4. **Acciones adicionales**:
+   - **Encender**: toggle de GPIO 14 (se mantiene al soltar)
+   - **Arrancar**: mantener presionado para activar GPIO 15
+   - **Botón 1**: mantener presionado para activar GPIO 15
+   - **Botón 2**: mantener presionado para activar GPIO 12
 
 ## Arquitectura
 
@@ -207,12 +223,23 @@ val message = String(byteArray, Charsets.UTF_8)
 
 ### Envío de Comandos
 
-Para cambiar el estado, se envía el string "1":
+Los comandos se cifran con AES-CBC antes de escribirlos en la característica RX.
+Por ejemplo, para alternar el bloqueo se envía el string `"1"`:
 ```kotlin
 val command = "1".toByteArray(Charsets.UTF_8)
-characteristic.value = command
+characteristic.value = aes.aesEncrypt(command)
 gatt.writeCharacteristic(characteristic)
 ```
+
+Tabla completa de comandos:
+
+| Comando | Acción | GPIO |
+|---------|--------|------|
+| `1` | Alterna bloqueo/desbloqueo | Relé |
+| `2` | Alterna encendido/apagado | 14 |
+| `3` / `3u` | Arranque presionado / liberado | 15 |
+| `4` / `4u` | Botón 1 presionado / liberado | 15 |
+| `5` / `5u` | Botón 2 presionado / liberado | 12 |
 
 ### Habilitación de Notificaciones
 

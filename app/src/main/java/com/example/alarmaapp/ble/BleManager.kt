@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.update
 
 class BleManager(private val context: Context, aesKey: String) {
 
@@ -32,12 +33,18 @@ class BleManager(private val context: Context, aesKey: String) {
 
     private var bluetoothGatt: BluetoothGatt? = null
 
+    // Android solo permite una operacion GATT a la vez. Encolamos los
+    // comandos para que un "up" (soltar) no se pierda si justo se estaba
+    // escribiendo el "down" anterior.
+    private val commandLock = Any()
+    private val commandQueue = ArrayDeque<ByteArray>()
+    private var writeInProgress = false
+
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
-    private val _statusMessage = MutableStateFlow<String>("")
-    val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
-    val statusAlarm = StatusAlarm(locked = true, lastNotified = false)
+    private val _statusAlarm = MutableStateFlow(StatusAlarm())
+    val statusAlarm: StateFlow<StatusAlarm> = _statusAlarm.asStateFlow()
 
     @Volatile
     private var aes = AES(aesKey)
@@ -58,20 +65,43 @@ class BleManager(private val context: Context, aesKey: String) {
         DISCONNECTING
     }
 
+    /**
+     * Estado que envia la placa:
+     * [conectado, bloqueado, encendido, arranque, boton1, boton2]
+     *
+     * Se mantiene compatibilidad con el firmware anterior, que enviaba
+     * "bloqueado,notificado" en los dos primeros campos.
+     */
     data class StatusAlarm(
-        var locked: Boolean,
-        var lastNotified: Boolean
+        val connected: Boolean = false,
+        val locked: Boolean = true,
+        val powerOn: Boolean = false,
+        val starterActive: Boolean = false,
+        val button1Active: Boolean = false,
+        val button2Active: Boolean = false
     ) {
-        fun parseStatus(decrypted: String) {
-            try {
-                val parts = decrypted.trim().split(",")
+        companion object {
+            fun parseStatus(decrypted: String): StatusAlarm? {
+                val parts = decrypted.trim().split(",").map { it.trim() }
+                if (parts.isEmpty() || parts[0].isEmpty()) {
+                    return null
+                }
 
-                locked = parts.getOrNull(0)?.trim() == "1"
-                lastNotified = parts.getOrNull(1)?.trim() == "1"
+                fun flag(index: Int): Boolean = parts.getOrNull(index) == "1"
 
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parsing status: $decrypted")
-
+                return if (parts.size >= 6) {
+                    StatusAlarm(
+                        connected = flag(0),
+                        locked = flag(1),
+                        powerOn = flag(2),
+                        starterActive = flag(3),
+                        button1Active = flag(4),
+                        button2Active = flag(5)
+                    )
+                } else {
+                    // Firmware anterior: parts[0] = bloqueado.
+                    StatusAlarm(connected = true, locked = flag(0))
+                }
             }
         }
     }
@@ -137,6 +167,12 @@ class BleManager(private val context: Context, aesKey: String) {
 
         _connectionState.value = ConnectionState.CONNECTING
 
+        // No arrastrar comandos de una conexion anterior.
+        synchronized(commandLock) {
+            commandQueue.clear()
+            writeInProgress = false
+        }
+
         // Si quedo un GATT de un intento anterior, cerrarlo antes de reconectar.
         bluetoothGatt?.close()
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
@@ -149,39 +185,86 @@ class BleManager(private val context: Context, aesKey: String) {
         bluetoothGatt?.close()
         bluetoothGatt = null
         _connectionState.value = ConnectionState.DISCONNECTED
+        markDisconnected()
     }
 
-    @SuppressLint("MissingPermission")
+    /**
+     * Al perder la conexion no llegaran mas notificaciones. La placa bloquea
+     * y libera las salidas momentaneas, asi que reflejamos ese estado.
+     */
+    private fun markDisconnected() {
+        synchronized(commandLock) {
+            commandQueue.clear()
+            writeInProgress = false
+        }
+
+        _statusAlarm.update {
+            it.copy(
+                connected = false,
+                locked = true,
+                starterActive = false,
+                button1Active = false,
+                button2Active = false
+            )
+        }
+    }
+
     fun sendCommand(command: String) {
+        val encrypted = try {
+            aes.aesEncrypt(command.toByteArray(Charsets.UTF_8))
+        } catch (e: Exception) {
+            // Clave AES con longitud invalida (debe tener 16, 24 o 32 caracteres)
+            Log.e(TAG, "No se pudo cifrar el comando", e)
+            return
+        }
+
+        synchronized(commandLock) {
+            commandQueue.addLast(encrypted)
+            if (!writeInProgress) {
+                writeNextLocked()
+            }
+        }
+    }
+
+    /**
+     * Debe llamarse con [commandLock] tomado.
+     */
+    @SuppressLint("MissingPermission")
+    private fun writeNextLocked() {
         val gatt = bluetoothGatt
         if (gatt == null) {
-            Log.e(TAG, "GATT is null, cannot send command")
+            commandQueue.clear()
+            writeInProgress = false
             return
         }
 
         val service = gatt.getService(BleConstants.SERVICE_UUID)
-        if (service == null) {
-            Log.e(TAG, "Service not found")
-            return
-        }
-
-        val characteristic = service.getCharacteristic(BleConstants.CHARACTERISTIC_UUID_RX)
+        val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_UUID_RX)
         if (characteristic == null) {
-            Log.e(TAG, "RX characteristic not found")
+            Log.e(TAG, "RX characteristic not found; comando descartado")
+            commandQueue.clear()
+            writeInProgress = false
             return
         }
 
-        try {
-            val data = command.toByteArray(Charsets.UTF_8)
-            characteristic.value = aes.aesEncrypt(data)
+        val next = commandQueue.removeFirstOrNull()
+        if (next == null) {
+            writeInProgress = false
+            return
+        }
 
-            val success = gatt.writeCharacteristic(characteristic)
-            if (!success) {
-                Log.e(TAG, "Failed to write characteristic")
-            }
-        } catch (e: Exception) {
-            // Clave AES con longitud invalida (debe tener 16, 24 o 32 caracteres)
-            Log.e(TAG, "No se pudo cifrar/enviar el comando", e)
+        writeInProgress = true
+        characteristic.value = next
+
+        val success = gatt.writeCharacteristic(characteristic)
+        if (!success) {
+            // Puede haber otra operacion GATT en curso (por ejemplo el
+            // descriptor de notificaciones). Dejamos el comando al frente
+            // y lo reintentamos cuando llegue el callback correspondiente
+            // o en el proximo envio.
+            commandQueue.addFirst(next)
+            writeInProgress = false
+            Log.w(TAG, "writeCharacteristic devolvio false; comando en cola")
         }
     }
 
@@ -212,6 +295,7 @@ class BleManager(private val context: Context, aesKey: String) {
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
                     _connectionState.value = ConnectionState.DISCONNECTED
+                    markDisconnected()
                     bluetoothGatt?.close()
                     bluetoothGatt = null
                 }
@@ -229,14 +313,17 @@ class BleManager(private val context: Context, aesKey: String) {
                     if (statusCharacteristic != null) {
                         enableNotifications(statusCharacteristic)
                     }
+                    _statusAlarm.update { it.copy(connected = true) }
                     _connectionState.value = ConnectionState.CONNECTED
                 } else {
                     Log.e(TAG, "Service ${BleConstants.SERVICE_UUID} not found")
                     _connectionState.value = ConnectionState.DISCONNECTED
+                    markDisconnected()
                 }
             } else {
                 Log.w(TAG, "onServicesDiscovered received: $status")
                 _connectionState.value = ConnectionState.DISCONNECTED
+                markDisconnected()
             }
         }
 
@@ -248,12 +335,45 @@ class BleManager(private val context: Context, aesKey: String) {
                 try {
                     val value = characteristic.value
                     val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
-                    statusAlarm.parseStatus(message)
-                    Log.i(TAG, "Status message received: $message")
-                    _statusMessage.value = if (statusAlarm.locked) "Bloqueada." else "Desbloqueada"
+                    val parsed = StatusAlarm.parseStatus(message)
+                    if (parsed != null) {
+                        _statusAlarm.value = parsed
+                        Log.i(TAG, "Status message received: $message")
+                    } else {
+                        Log.w(TAG, "Estado con formato invalido: $message")
+                    }
                 } catch (e: Exception) {
                     // Clave distinta o paquete corrupto: no tumbar la app.
                     Log.e(TAG, "No se pudo descifrar el estado recibido", e)
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_RX) {
+                synchronized(commandLock) {
+                    writeInProgress = false
+                    writeNextLocked()
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            // Si un comando quedo encolado mientras se habilitaban las
+            // notificaciones, ahora hay via libre para escribirlo.
+            synchronized(commandLock) {
+                if (!writeInProgress) {
+                    writeNextLocked()
                 }
             }
         }

@@ -29,7 +29,7 @@ class AlarmaApplication : Application() {
         appScope.launch {
             combine(
                 bleRepository.connectionState,
-                bleRepository.statusMessage
+                bleRepository.statusAlarm
             ) { _, _ -> Unit }.collect {
                 updateWidgets()
             }

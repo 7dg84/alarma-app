@@ -54,6 +54,10 @@ data class BleUiState(
     val connectionStatus: String = "Desconectado",
     val statusMessage: String = "",
     val isLocked: Boolean = true,
+    val isPowerOn: Boolean = false,
+    val isStarterActive: Boolean = false,
+    val isButton1Active: Boolean = false,
+    val isButton2Active: Boolean = false,
     val isScanning: Boolean = false,
     val scannedDevices: List<BleDevice> = emptyList(),
     val savedDeviceAddress: String? = null,
@@ -72,6 +76,11 @@ data class BleUiState(
 - `connectToSavedDevice()`: Conecta al dispositivo guardado en preferencias
 - `disconnect()`: Desconecta del dispositivo actual
 - `toggleLock()`: Envía el comando para cambiar el estado
+- `togglePower()`: Alterna GPIO 14 (encender/apagar)
+- `pressStarter()` / `releaseStarter()`: GPIO 15 momentáneo
+- `pressButton1()` / `releaseButton1()`: GPIO 15 momentáneo
+- `pressButton2()` / `releaseButton2()`: GPIO 12 momentáneo
+- `releaseAllHolds()`: Libera las salidas momentáneas al pasar a segundo plano
 
 #### 2. BleRepository
 **Ubicación:** `repository/BleRepository.kt`
@@ -84,7 +93,9 @@ data class BleUiState(
 **Métodos Clave:**
 - `scanDevices()`: Flow de dispositivos escaneados
 - `connect(address)`: Inicia conexión a dispositivo
+- `sendCommand(command)`: Encola un comando cifrado
 - `sendToggleCommand()`: Envía comando "1"
+- `statusAlarm`: StateFlow con el estado completo de la placa
 - `saveDeviceConfig()`: Persiste configuración
 - `getSavedDevice*()`: Recupera configuración guardada
 
@@ -171,7 +182,9 @@ ESP32 envía notificación
   ↓
 onCharacteristicChanged()
   ↓
-Actualiza statusMessage StateFlow
+StatusAlarm.parseStatus("1,0,0,0,0,0")
+  ↓
+Actualiza statusAlarm StateFlow
   ↓
 UI recompone con nuevo estado
 ```
@@ -192,26 +205,52 @@ object BleConstants {
 ### Protocolo de Comunicación
 
 #### Escritura (App → ESP32)
+
+Los comandos se cifran con AES-CBC antes de escribirse:
+
+| Comando | Acción | GPIO |
+|---------|--------|------|
+| `1` | Alterna bloqueo/desbloqueo | Relé |
+| `2` | Alterna encendido/apagado | 14 |
+| `3` / `3u` | Arranque presionado / liberado | 15 |
+| `4` / `4u` | Botón 1 presionado / liberado | 15 |
+| `5` / `5u` | Botón 2 presionado / liberado | 12 |
+
 ```kotlin
-// Comando para cambiar estado
-val command = "1"
-val data = command.toByteArray(Charsets.UTF_8)
+val command = "2"
+val data = aes.aesEncrypt(command.toByteArray(Charsets.UTF_8))
 characteristic.value = data
 gatt.writeCharacteristic(characteristic)
 ```
 
+Los comandos se encolan porque Android solo permite una operación GATT a la
+vez. Así un `up` (soltar) no se pierde si el `down` anterior sigue en curso.
+
 #### Lectura (ESP32 → App)
+
+La placa notifica el estado cifrado con el formato:
+
+```text
+conectado,bloqueado,encendido,arranque,boton1,boton2
+```
+
+Ejemplo: `1,1,0,0,0,0`
+
 ```kotlin
-// Recepción de notificación
 override fun onCharacteristicChanged(
     gatt: BluetoothGatt,
     characteristic: BluetoothGattCharacteristic
 ) {
     val value = characteristic.value
-    val message = String(value, Charsets.UTF_8)
-    // message = "Moto bloqueada." o "Moto desbloqueada."
+    val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
+    val status = BleManager.StatusAlarm.parseStatus(message)
+    // status.locked, status.powerOn, status.starterActive, ...
 }
 ```
+
+Los botones momentáneos (`3`, `4`, `5`) se reenvían cada 500 ms mientras el
+usuario los mantiene presionados. El firmware libera la salida si pasan 1.5 s
+sin recibir el keep-alive.
 
 ### Autenticación/Bonding
 

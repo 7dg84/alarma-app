@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class BleUiState(
@@ -20,6 +21,10 @@ data class BleUiState(
     val connectionStatus: String = "Desconectado",
     val statusMessage: String = "",
     val isLocked: Boolean = true,
+    val isPowerOn: Boolean = false,
+    val isStarterActive: Boolean = false,
+    val isButton1Active: Boolean = false,
+    val isButton2Active: Boolean = false,
     val isScanning: Boolean = false,
     val scannedDevices: List<BleDevice> = emptyList(),
     val savedDeviceAddress: String? = null,
@@ -39,11 +44,14 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<BleUiState> = _uiState.asStateFlow()
     
     private var scanJob: Job? = null
+    private var starterHoldJob: Job? = null
+    private var button1HoldJob: Job? = null
+    private var button2HoldJob: Job? = null
     
     init {
         loadSavedConfig()
         observeConnectionState()
-        observeStatusMessage()
+        observeStatus()
         updateBluetoothEnabled()
     }
     
@@ -68,27 +76,36 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                     BleManager.ConnectionState.DISCONNECTING -> "Desconectando..."
                 }
                 
+                if (!isConnected) {
+                    // Sin conexion no tiene sentido seguir reenviando keep-alives.
+                    cancelHoldJobs()
+                }
+
                 _uiState.update { state ->
                     state.copy(
                         isConnected = isConnected,
-                        connectionStatus = status
+                        connectionStatus = status,
+                        isStarterActive = if (isConnected) state.isStarterActive else false,
+                        isButton1Active = if (isConnected) state.isButton1Active else false,
+                        isButton2Active = if (isConnected) state.isButton2Active else false
                     )
                 }
             }
         }
     }
     
-    private fun observeStatusMessage() {
+    private fun observeStatus() {
         viewModelScope.launch {
-            repository.statusMessage.collect { message ->
-                if (message.isNotEmpty()) {
-                    val isLocked = repository.statusAlarm.locked
-                    _uiState.update { state ->
-                        state.copy(
-                            statusMessage = message,
-                            isLocked = isLocked
-                        )
-                    }
+            repository.statusAlarm.collect { status ->
+                _uiState.update { state ->
+                    state.copy(
+                        isLocked = status.locked,
+                        isPowerOn = status.powerOn,
+                        isStarterActive = status.starterActive,
+                        isButton1Active = status.button1Active,
+                        isButton2Active = status.button2Active,
+                        statusMessage = if (status.locked) "Bloqueada." else "Desbloqueada"
+                    )
                 }
             }
         }
@@ -163,6 +180,96 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
         repository.sendToggleCommand()
     }
 
-    // No desconectar en onCleared(): el widget debe seguir usando la conexion
-    // cuando se cierra o recrea la Activity.
+    /** Enciende / apaga la salida GPIO 14. */
+    fun togglePower() {
+        if (!_uiState.value.isConnected) return
+        repository.sendCommand(BleConstants.COMMAND_POWER_TOGGLE)
+    }
+
+    /** Mantener presionado "Arrancar": GPIO 15 activo solo mientras dura. */
+    fun pressStarter() {
+        starterHoldJob?.cancel()
+        starterHoldJob = startHold(BleConstants.COMMAND_STARTER_DOWN)
+    }
+
+    fun releaseStarter() {
+        starterHoldJob?.cancel()
+        starterHoldJob = null
+        sendRelease(BleConstants.COMMAND_STARTER_UP)
+    }
+
+    /** Mantener presionado "Boton 1": GPIO 15 activo solo mientras dura. */
+    fun pressButton1() {
+        button1HoldJob?.cancel()
+        button1HoldJob = startHold(BleConstants.COMMAND_BUTTON1_DOWN)
+    }
+
+    fun releaseButton1() {
+        button1HoldJob?.cancel()
+        button1HoldJob = null
+        sendRelease(BleConstants.COMMAND_BUTTON1_UP)
+    }
+
+    /** Mantener presionado "Boton 2": GPIO 12 activo solo mientras dura. */
+    fun pressButton2() {
+        button2HoldJob?.cancel()
+        button2HoldJob = startHold(BleConstants.COMMAND_BUTTON2_DOWN)
+    }
+
+    fun releaseButton2() {
+        button2HoldJob?.cancel()
+        button2HoldJob = null
+        sendRelease(BleConstants.COMMAND_BUTTON2_UP)
+    }
+
+    /**
+     * Envia el comando "down" de inmediato y lo repite cada
+     * [BleConstants.HOLD_REFRESH_MS] mientras el boton siga presionado.
+     * El firmware apaga la salida si deja de recibirlo (watchdog).
+     */
+    private fun startHold(downCommand: String): Job? {
+        if (!_uiState.value.isConnected) return null
+
+        return viewModelScope.launch {
+            repository.sendCommand(downCommand)
+            while (isActive) {
+                delay(BleConstants.HOLD_REFRESH_MS)
+                repository.sendCommand(downCommand)
+            }
+        }
+    }
+
+    private fun sendRelease(upCommand: String) {
+        if (_uiState.value.isConnected) {
+            repository.sendCommand(upCommand)
+        }
+    }
+
+    private fun cancelHoldJobs() {
+        starterHoldJob?.cancel()
+        starterHoldJob = null
+        button1HoldJob?.cancel()
+        button1HoldJob = null
+        button2HoldJob?.cancel()
+        button2HoldJob = null
+    }
+
+    /**
+     * Libera cualquier boton momentaneo que siga activo. Se llama al cerrar
+     * la app o cuando pasa a segundo plano (ON_STOP).
+     */
+    fun releaseAllHolds() {
+        if (starterHoldJob != null) sendRelease(BleConstants.COMMAND_STARTER_UP)
+        if (button1HoldJob != null) sendRelease(BleConstants.COMMAND_BUTTON1_UP)
+        if (button2HoldJob != null) sendRelease(BleConstants.COMMAND_BUTTON2_UP)
+        cancelHoldJobs()
+    }
+
+    override fun onCleared() {
+        // No desconectar: el widget debe seguir usando la conexion. Pero si
+        // el usuario cierra la app con un boton presionado, liberamos las
+        // salidas momentaneas.
+        releaseAllHolds()
+        super.onCleared()
+    }
 }

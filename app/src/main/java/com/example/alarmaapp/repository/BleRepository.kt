@@ -39,8 +39,7 @@ class BleRepository(context: Context, private val defaultAesKey: String) {
     }
     
     val connectionState: StateFlow<BleManager.ConnectionState> = bleManager.connectionState
-    val statusAlarm = bleManager.statusAlarm
-    val statusMessage: StateFlow<String> = bleManager.statusMessage
+    val statusAlarm: StateFlow<BleManager.StatusAlarm> = bleManager.statusAlarm
     
     fun isBluetoothEnabled(): Boolean {
         return bleManager.isBluetoothEnabled()
@@ -77,6 +76,10 @@ class BleRepository(context: Context, private val defaultAesKey: String) {
         bleManager.disconnect()
     }
     
+    fun sendCommand(command: String) {
+        bleManager.sendCommand(command)
+    }
+
     fun sendToggleCommand() {
         bleManager.sendCommand(BleConstants.COMMAND_TOGGLE)
     }

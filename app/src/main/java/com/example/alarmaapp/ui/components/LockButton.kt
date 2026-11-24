@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -37,13 +38,13 @@ fun LockButton(
         onClick = onToggle,
         modifier = modifier
             .fillMaxWidth(),
-        shape = CircleShape,
+        shape = RoundedCornerShape(16.dp),
         enabled = isConnected,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (!isLocked) LockedRed else UnlockedGreen,
             disabledContainerColor = Color.Gray
         ),
-        contentPadding = PaddingValues(24.dp)
+        contentPadding = PaddingValues(vertical = 12.dp, horizontal = 8.dp)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -52,14 +53,19 @@ fun LockButton(
             Icon(
                 imageVector = if (!isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
                 contentDescription = if (!isLocked) "Bloqueado" else "Desbloqueado",
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(32.dp),
                 tint = Color.White
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = if (!isLocked) "Bloquear" else "Desbloquear",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleSmall,
                 color = Color.White
+            )
+            Text(
+                text = "presionar",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.8f)
             )
         }
     }

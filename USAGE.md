@@ -110,6 +110,27 @@ Después de guardar la configuración:
 3. El comando se enviará al ESP32
 4. El botón se actualizará con el nuevo estado
 
+#### Encender / Apagar (GPIO 14)
+
+- Presiona una vez el botón **Encender** para activar la salida.
+- Presiona de nuevo (ahora dice **Apagar**) para desactivarla.
+- El estado se mantiene aunque sueltes el botón.
+
+#### Arrancar (GPIO 15)
+
+- **Mantén presionado** el botón **Arrancar**.
+- Mientras lo mantengas, la placa pone GPIO 15 en HIGH.
+- Al soltarlo (o si la app pierde la conexión), GPIO 15 vuelve a LOW.
+- Por seguridad, la placa también lo apaga si deja de recibir el
+  keep-alive de la app durante 1.5 segundos.
+
+#### Botón 1 (GPIO 15) y Botón 2 (GPIO 12)
+
+- Funcionan igual que **Arrancar**: mantén presionado para activar la salida.
+- **Botón 1** comparte GPIO 15 con **Arrancar**; la salida permanece activa
+  mientras cualquiera de los dos esté presionado.
+- **Botón 2** usa GPIO 12.
+
 ### Indicadores de Estado
 
 #### Barra Superior Derecha
@@ -126,6 +147,20 @@ Después de guardar la configuración:
 - Texto: Estado actual del dispositivo
   - "Moto bloqueada." cuando está bloqueado
   - "Moto desbloqueada." cuando está desbloqueado
+
+#### Estado de la placa
+
+Debajo de los botones de acción se muestran seis indicadores que reflejan el
+array enviado por el ESP32:
+
+`[conectado, bloqueado, encendido, arranque, botón 1, botón 2]`
+
+- **Conectado**: hay enlace BLE activo.
+- **Bloqueado**: estado del relé de alarma.
+- **Encendido**: salida GPIO 14.
+- **Arranque**: botón Arrancar presionado.
+- **Botón 1**: botón 1 presionado (GPIO 15).
+- **Botón 2**: botón 2 presionado (GPIO 12).
 
 ### Cambiar de Dispositivo
 
