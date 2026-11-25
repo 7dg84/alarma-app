@@ -11,6 +11,7 @@ import com.example.alarmaapp.AlarmaApplication
 import com.example.alarmaapp.MainActivity
 import com.example.alarmaapp.R
 import com.example.alarmaapp.ble.BleManager
+import com.example.alarmaapp.service.BleForegroundService
 
 /**
  * Widget compacto de 1 fila x 2 columnas con los dos botones de la app,
@@ -24,6 +25,10 @@ import com.example.alarmaapp.ble.BleManager
  *
  * Usa el mismo BleRepository de la Application, por lo que comparte la
  * conexion y envia el mismo comando AES ("1") que la app.
+ *
+ * Las acciones ya no son broadcasts publicos: si el servicio en segundo plano
+ * esta activo, el toque va directo al servicio; si esta deshabilitado, va a un
+ * receiver privado (exported=false) de la propia app.
  */
 class AlarmaWidgetReceiver : AppWidgetProvider() {
 
@@ -38,38 +43,10 @@ class AlarmaWidgetReceiver : AppWidgetProvider() {
         }
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        super.onReceive(context, intent)
-
-        val repository = (context.applicationContext as AlarmaApplication).bleRepository
-
-        when (intent.action) {
-            ACTION_TOGGLE_CONNECT -> {
-                val state = repository.connectionState.value
-                if (state == BleManager.ConnectionState.CONNECTED ||
-                    state == BleManager.ConnectionState.CONNECTING
-                ) {
-                    repository.disconnect()
-                } else {
-                    repository.connectToSavedDevice()
-                }
-                updateAll(context)
-            }
-
-            ACTION_TOGGLE_LOCK -> {
-                if (repository.connectionState.value == BleManager.ConnectionState.CONNECTED) {
-                    repository.sendToggleCommand()
-                }
-                updateAll(context)
-            }
-        }
-    }
-
     companion object {
-        private const val ACTION_TOGGLE_CONNECT = "com.example.alarmaapp.widget.TOGGLE_CONNECT"
-        private const val ACTION_TOGGLE_LOCK = "com.example.alarmaapp.widget.TOGGLE_LOCK"
         private const val REQUEST_CONNECT = 1
         private const val REQUEST_LOCK = 2
+        private const val REQUEST_OPEN_APP = 3
 
         /** Refresca todos los widgets activos con el estado BLE actual. */
         fun updateAll(context: Context) {
@@ -85,7 +62,9 @@ class AlarmaWidgetReceiver : AppWidgetProvider() {
         }
 
         private fun buildViews(context: Context): RemoteViews {
-            val repository = (context.applicationContext as AlarmaApplication).bleRepository
+            val app = context.applicationContext as AlarmaApplication
+            val repository = app.bleRepository
+            val useService = app.appSettings.values.value.backgroundServiceEnabled
             val state = repository.connectionState.value
             val connected = state == BleManager.ConnectionState.CONNECTED
             val connecting = state == BleManager.ConnectionState.CONNECTING
@@ -120,7 +99,7 @@ class AlarmaWidgetReceiver : AppWidgetProvider() {
             views.setOnClickPendingIntent(
                 R.id.widget_connect_button,
                 if (configured) {
-                    broadcastPendingIntent(context, ACTION_TOGGLE_CONNECT, REQUEST_CONNECT)
+                    toggleConnectPendingIntent(context, useService)
                 } else {
                     activityPendingIntent(context)
                 }
@@ -146,7 +125,7 @@ class AlarmaWidgetReceiver : AppWidgetProvider() {
             views.setOnClickPendingIntent(
                 R.id.widget_lock_button,
                 if (connected) {
-                    broadcastPendingIntent(context, ACTION_TOGGLE_LOCK, REQUEST_LOCK)
+                    toggleLockPendingIntent(context, useService)
                 } else {
                     null // Deshabilitado hasta que haya conexion, igual que en la app.
                 }
@@ -155,18 +134,70 @@ class AlarmaWidgetReceiver : AppWidgetProvider() {
             return views
         }
 
+        private fun toggleConnectPendingIntent(
+            context: Context,
+            useService: Boolean
+        ): PendingIntent {
+            return if (useService) {
+                foregroundServicePendingIntent(
+                    context,
+                    BleForegroundService.ACTION_TOGGLE_CONNECT,
+                    REQUEST_CONNECT
+                )
+            } else {
+                broadcastPendingIntent(
+                    context,
+                    WidgetActionReceiver.ACTION_TOGGLE_CONNECT,
+                    REQUEST_CONNECT
+                )
+            }
+        }
+
+        private fun toggleLockPendingIntent(
+            context: Context,
+            useService: Boolean
+        ): PendingIntent {
+            return if (useService) {
+                foregroundServicePendingIntent(
+                    context,
+                    BleForegroundService.ACTION_TOGGLE_LOCK,
+                    REQUEST_LOCK
+                )
+            } else {
+                broadcastPendingIntent(
+                    context,
+                    WidgetActionReceiver.ACTION_TOGGLE_LOCK,
+                    REQUEST_LOCK
+                )
+            }
+        }
+
+        private fun foregroundServicePendingIntent(
+            context: Context,
+            action: String,
+            requestCode: Int
+        ): PendingIntent {
+            val intent = Intent(context, BleForegroundService::class.java).setAction(action)
+            return PendingIntent.getForegroundService(
+                context,
+                requestCode,
+                intent,
+                pendingFlags()
+            )
+        }
+
         private fun broadcastPendingIntent(
             context: Context,
             action: String,
             requestCode: Int
         ): PendingIntent {
-            val intent = Intent(context, AlarmaWidgetReceiver::class.java).setAction(action)
+            val intent = Intent(context, WidgetActionReceiver::class.java).setAction(action)
             return PendingIntent.getBroadcast(context, requestCode, intent, pendingFlags())
         }
 
         private fun activityPendingIntent(context: Context): PendingIntent {
             val intent = Intent(context, MainActivity::class.java)
-            return PendingIntent.getActivity(context, REQUEST_CONNECT, intent, pendingFlags())
+            return PendingIntent.getActivity(context, REQUEST_OPEN_APP, intent, pendingFlags())
         }
 
         private fun pendingFlags(): Int =

@@ -20,6 +20,12 @@
     <!-- BLE hardware requirement -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
+    <!-- Servicio en primer plano para mantener la conexion BLE -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:name=".AlarmaApplication"
         android:allowBackup="true"
@@ -48,6 +54,25 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/alarma_widget_info" />
+        </receiver>
+
+        <!-- Acciones privadas del widget cuando el servicio esta deshabilitado. -->
+        <receiver
+            android:name=".widget.WidgetActionReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".service.BleForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
         </receiver>
     </application>
 

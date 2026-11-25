@@ -7,10 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Check
@@ -21,6 +22,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,10 +41,18 @@ fun SettingsDialog(
     scannedDevices: List<BleDevice>,
     savedDeviceAddress: String?,
     savedPassword: String,
+    backgroundServiceEnabled: Boolean,
+    reconnectEnabled: Boolean,
+    autoConnectEnabled: Boolean,
+    autoStartEnabled: Boolean,
     onDismiss: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
-    onSelectDevice: (BleDevice, String) -> Unit
+    onSelectDevice: (BleDevice, String) -> Unit,
+    onBackgroundServiceChange: (Boolean) -> Unit,
+    onReconnectChange: (Boolean) -> Unit,
+    onAutoConnectChange: (Boolean) -> Unit,
+    onAutoStartChange: (Boolean) -> Unit
 ) {
     var password by remember { mutableStateOf(savedPassword) }
     var selectedDevice by remember { mutableStateOf<BleDevice?>(null) }
@@ -54,7 +64,6 @@ fun SettingsDialog(
         normalizedPassword.length == 24 ||
         normalizedPassword.length == 32
 
-    
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -62,7 +71,10 @@ fun SettingsDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
                 // Password field
                 OutlinedTextField(
@@ -82,9 +94,51 @@ fun SettingsDialog(
                         )
                     }
                 )
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
+                // Ajustes de segundo plano. Se aplican al instante: no hace
+                // falta seleccionar un dispositivo para que tengan efecto.
+                Text(
+                    text = "Segundo plano",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "Estos cambios se aplican al instante.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                SettingSwitchRow(
+                    title = "Servicio en segundo plano",
+                    subtitle = "Mantiene la conexión BLE aunque cierres la app.",
+                    checked = backgroundServiceEnabled,
+                    onCheckedChange = onBackgroundServiceChange
+                )
+
+                SettingSwitchRow(
+                    title = "Reconexión automática",
+                    subtitle = "Vuelve a conectar si se pierde la señal o se apaga el Bluetooth.",
+                    checked = reconnectEnabled,
+                    onCheckedChange = onReconnectChange
+                )
+
+                SettingSwitchRow(
+                    title = "Conexión automática",
+                    subtitle = "Conecta al abrir la app si hay un dispositivo guardado.",
+                    checked = autoConnectEnabled,
+                    onCheckedChange = onAutoConnectChange
+                )
+
+                SettingSwitchRow(
+                    title = "Inicio automático",
+                    subtitle = "Inicia el servicio al encender el teléfono.",
+                    checked = autoStartEnabled,
+                    onCheckedChange = onAutoStartChange
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Scan button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -95,7 +149,7 @@ fun SettingsDialog(
                         text = "Dispositivos BLE",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    
+
                     if (isScanning) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp))
@@ -111,22 +165,16 @@ fun SettingsDialog(
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 // Device list
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                ) {
-                    items(scannedDevices) { device ->
-                        DeviceItem(
-                            device = device,
-                            isSelected = device.address == savedDeviceAddress,
-                            onClick = { selectedDevice = device }
-                        )
-                    }
+                scannedDevices.forEach { device ->
+                    DeviceItem(
+                        device = device,
+                        isSelected = device.address == savedDeviceAddress,
+                        onClick = { selectedDevice = device }
+                    )
                 }
             }
         },
@@ -145,10 +193,42 @@ fun SettingsDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancelar")
+                Text("Cerrar")
             }
         }
     )
+}
+
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = null
+        )
+    }
 }
 
 @Composable
@@ -181,7 +261,7 @@ fun DeviceItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
+
             if (isSelected) {
                 Icon(
                     imageVector = Icons.Default.Check,

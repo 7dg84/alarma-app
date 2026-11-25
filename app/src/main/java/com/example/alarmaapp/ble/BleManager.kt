@@ -8,12 +8,14 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import kotlinx.coroutines.channels.awaitClose
@@ -159,9 +161,20 @@ class BleManager(private val context: Context, aesKey: String) {
 
     @SuppressLint("MissingPermission")
     fun connect(deviceAddress: String) {
-        val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
-        if (device == null) {
-            Log.e(TAG, "Device not found")
+        val adapter = bluetoothAdapter
+        if (adapter == null) {
+            Log.e(TAG, "Bluetooth adapter no disponible")
+            _connectionState.value = ConnectionState.DISCONNECTED
+            markDisconnected()
+            return
+        }
+
+        val device = try {
+            adapter.getRemoteDevice(deviceAddress)
+        } catch (e: Exception) {
+            Log.e(TAG, "Direccion BLE invalida: $deviceAddress", e)
+            _connectionState.value = ConnectionState.DISCONNECTED
+            markDisconnected()
             return
         }
 
@@ -174,15 +187,36 @@ class BleManager(private val context: Context, aesKey: String) {
         }
 
         // Si quedo un GATT de un intento anterior, cerrarlo antes de reconectar.
-        bluetoothGatt?.close()
-        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        // Se pone en null primero para que sus callbacks tardios se ignoren.
+        val previousGatt = bluetoothGatt
+        bluetoothGatt = null
+        try {
+            previousGatt?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo cerrar el GATT anterior", e)
+        }
+        bluetoothGatt = try {
+            device.connectGatt(context, false, gattCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "connectGatt fallo", e)
+            null
+        }
+
+        if (bluetoothGatt == null) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            markDisconnected()
+        }
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
         _connectionState.value = ConnectionState.DISCONNECTING
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
+        try {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo desconectar el GATT", e)
+        }
         bluetoothGatt = null
         _connectionState.value = ConnectionState.DISCONNECTED
         markDisconnected()
@@ -254,9 +288,25 @@ class BleManager(private val context: Context, aesKey: String) {
         }
 
         writeInProgress = true
-        characteristic.value = next
 
-        val success = gatt.writeCharacteristic(characteristic)
+        val success = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeCharacteristic(
+                    characteristic,
+                    next,
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                ) == BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                characteristic.value = next
+                @Suppress("DEPRECATION")
+                gatt.writeCharacteristic(characteristic)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "writeCharacteristic fallo", e)
+            false
+        }
+
         if (!success) {
             // Puede haber otra operacion GATT en curso (por ejemplo el
             // descriptor de notificaciones). Dejamos el comando al frente
@@ -272,38 +322,75 @@ class BleManager(private val context: Context, aesKey: String) {
     private fun enableNotifications(characteristic: BluetoothGattCharacteristic) {
         val gatt = bluetoothGatt ?: return
 
-        gatt.setCharacteristicNotification(characteristic, true)
+        try {
+            gatt.setCharacteristicNotification(characteristic, true)
 
-        val descriptor = characteristic.getDescriptor(BleConstants.CLIENT_CHARACTERISTIC_CONFIG_UUID)
-        if (descriptor != null) {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(descriptor)
+            val descriptor = characteristic.getDescriptor(
+                BleConstants.CLIENT_CHARACTERISTIC_CONFIG_UUID
+            )
+            if (descriptor != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    @Suppress("DEPRECATION")
+                    gatt.writeDescriptor(descriptor)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "No se pudieron habilitar las notificaciones", e)
         }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            // Un GATT viejo puede avisar tarde, despues de que ya conectamos
+            // uno nuevo. Ignorarlo evita pisar el estado de la conexion actual.
+            if (bluetoothGatt !== gatt) {
+                Log.d(TAG, "Callback de un GATT anterior; se ignora")
+                try {
+                    gatt.close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "No se pudo cerrar el GATT anterior", e)
+                }
+                return
+            }
+
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i(TAG, "Connected to GATT server")
                     // Descubrir servicios SIEMPRE al conectar. Antes solo se hacia
                     // si el telefono ya estaba emparejado, por lo que la primera
                     // conexion se quedaba en "Conectando..." para siempre.
-                    gatt.discoverServices()
+                    try {
+                        gatt.discoverServices()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "No se pudieron descubrir los servicios", e)
+                        closeFailedGatt(gatt)
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i(TAG, "Disconnected from GATT server")
                     _connectionState.value = ConnectionState.DISCONNECTED
                     markDisconnected()
-                    bluetoothGatt?.close()
-                    bluetoothGatt = null
+                    try {
+                        gatt.close()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "No se pudo cerrar el GATT desconectado", e)
+                    }
+                    if (bluetoothGatt === gatt) {
+                        bluetoothGatt = null
+                    }
                 }
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (bluetoothGatt !== gatt) return
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Services discovered")
 
@@ -317,23 +404,56 @@ class BleManager(private val context: Context, aesKey: String) {
                     _connectionState.value = ConnectionState.CONNECTED
                 } else {
                     Log.e(TAG, "Service ${BleConstants.SERVICE_UUID} not found")
-                    _connectionState.value = ConnectionState.DISCONNECTED
-                    markDisconnected()
+                    closeFailedGatt(gatt)
                 }
             } else {
                 Log.w(TAG, "onServicesDiscovered received: $status")
-                _connectionState.value = ConnectionState.DISCONNECTED
-                markDisconnected()
+                closeFailedGatt(gatt)
             }
         }
 
+        @SuppressLint("MissingPermission")
+        private fun closeFailedGatt(gatt: BluetoothGatt) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            markDisconnected()
+            try {
+                gatt.disconnect()
+                gatt.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "No se pudo cerrar el GATT con error", e)
+            }
+            if (bluetoothGatt === gatt) {
+                bluetoothGatt = null
+            }
+        }
+
+        @Deprecated("Deprecated in Java")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
+            val value = characteristic.value ?: return
+            handleCharacteristicChanged(gatt, characteristic, value)
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            handleCharacteristicChanged(gatt, characteristic, value)
+        }
+
+        private fun handleCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            if (bluetoothGatt !== gatt) return
+
             if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_STATUS) {
                 try {
-                    val value = characteristic.value
                     val message = String(aes.aesDecrypt(value), Charsets.UTF_8)
                     val parsed = StatusAlarm.parseStatus(message)
                     if (parsed != null) {
@@ -355,6 +475,8 @@ class BleManager(private val context: Context, aesKey: String) {
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
+            if (bluetoothGatt !== gatt) return
+
             if (characteristic.uuid == BleConstants.CHARACTERISTIC_UUID_RX) {
                 synchronized(commandLock) {
                     writeInProgress = false
@@ -369,6 +491,8 @@ class BleManager(private val context: Context, aesKey: String) {
             descriptor: BluetoothGattDescriptor,
             status: Int
         ) {
+            if (bluetoothGatt !== gatt) return
+
             // Si un comando quedo encolado mientras se habilitaban las
             // notificaciones, ahora hay via libre para escribirlo.
             synchronized(commandLock) {

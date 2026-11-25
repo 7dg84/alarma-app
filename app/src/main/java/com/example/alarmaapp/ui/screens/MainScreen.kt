@@ -1,8 +1,10 @@
 package com.example.alarmaapp.ui.screens
 
+import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -17,8 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LooksOne
 import androidx.compose.material.icons.filled.LooksTwo
 import androidx.compose.material.icons.filled.PlayArrow
@@ -70,11 +70,17 @@ fun MainScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
 
     // Si la app pasa a segundo plano con un boton momentaneo presionado,
-    // liberamos las salidas para no dejar el arranque activo.
+    // liberamos las salidas para no dejar el arranque activo. Al volver,
+    // refrescamos el estado de Bluetooth y la notificacion del servicio.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                viewModel.releaseAllHolds()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.releaseAllHolds()
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.updateBluetoothEnabled()
+                    viewModel.refreshNotificationIfGranted()
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -94,16 +100,45 @@ fun MainScreen(
             viewModel.updateBluetoothEnabled()
         }
     }
+
+    // Android 13+ muestra la notificacion persistente del servicio solo si
+    // el usuario concede POST_NOTIFICATIONS. Si la deniega, la conexion sigue.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.refreshNotification()
+    }
     
-    // Check permissions on launch
-    LaunchedEffect(permissionsState.allPermissionsGranted) {
+    // Auto-conexion al abrir la app (si el ajuste esta habilitado).
+    LaunchedEffect(
+        permissionsState.allPermissionsGranted,
+        uiState.autoConnectEnabled,
+        uiState.isBluetoothEnabled
+    ) {
         viewModel.updatePermissionsGranted(permissionsState.allPermissionsGranted)
         
-        if (permissionsState.allPermissionsGranted && uiState.isBluetoothEnabled) {
-            // Auto-connect if device is saved
-            if (uiState.savedDeviceAddress != null && !uiState.isConnected) {
-                viewModel.connectToSavedDevice()
-            }
+        if (permissionsState.allPermissionsGranted &&
+            uiState.isBluetoothEnabled &&
+            uiState.autoConnectEnabled &&
+            uiState.savedDeviceAddress != null &&
+            !uiState.isConnected
+        ) {
+            viewModel.connectToSavedDevice()
+        }
+    }
+
+    // Pide el permiso de notificaciones una sola vez, sin bloquear la app.
+    LaunchedEffect(
+        permissionsState.allPermissionsGranted,
+        uiState.backgroundServiceEnabled
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            permissionsState.allPermissionsGranted &&
+            uiState.backgroundServiceEnabled &&
+            viewModel.shouldAskNotificationPermission()
+        ) {
+            viewModel.markNotificationPermissionAsked()
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
     
@@ -186,6 +221,10 @@ fun MainScreen(
             scannedDevices = uiState.scannedDevices,
             savedDeviceAddress = uiState.savedDeviceAddress,
             savedPassword = uiState.savedAESKey,
+            backgroundServiceEnabled = uiState.backgroundServiceEnabled,
+            reconnectEnabled = uiState.reconnectEnabled,
+            autoConnectEnabled = uiState.autoConnectEnabled,
+            autoStartEnabled = uiState.autoStartEnabled,
             onDismiss = { 
                 viewModel.stopScan()
                 showSettingsDialog = false 
@@ -193,14 +232,13 @@ fun MainScreen(
             onStartScan = { viewModel.startScan() },
             onStopScan = { viewModel.stopScan() },
             onSelectDevice = { device, password ->
+                // Guarda y reconecta; el controlador decide si usa el servicio.
                 viewModel.selectDevice(device, password)
-                // Disconnect from current device if connected
-                if (uiState.isConnected) {
-                    viewModel.disconnect()
-                }
-                // Connect to new device
-                viewModel.connectToSavedDevice()
-            }
+            },
+            onBackgroundServiceChange = { viewModel.setBackgroundServiceEnabled(it) },
+            onReconnectChange = { viewModel.setReconnectEnabled(it) },
+            onAutoConnectChange = { viewModel.setAutoConnectEnabled(it) },
+            onAutoStartChange = { viewModel.setAutoStartEnabled(it) }
         )
     }
 }

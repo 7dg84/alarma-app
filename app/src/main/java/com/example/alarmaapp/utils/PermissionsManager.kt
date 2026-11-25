@@ -31,4 +31,17 @@ object PermissionsManager {
             ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
         }
     }
+
+    /**
+     * Android 13+ exige POST_NOTIFICATIONS para mostrar la notificacion del
+     * servicio en primer plano. Si se deniega, la conexion sigue funcionando,
+     * pero la notificacion no aparece en la bandeja.
+     */
+    fun hasNotificationPermission(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
 }

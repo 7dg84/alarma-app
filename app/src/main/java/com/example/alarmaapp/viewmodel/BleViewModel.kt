@@ -1,12 +1,15 @@
 package com.example.alarmaapp.viewmodel
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import com.example.alarmaapp.AlarmaApplication
 import androidx.lifecycle.viewModelScope
 import com.example.alarmaapp.ble.BleConstants
 import com.example.alarmaapp.ble.BleDevice
 import com.example.alarmaapp.ble.BleManager
+import com.example.alarmaapp.service.BleServiceController
+import com.example.alarmaapp.utils.PermissionsManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +35,10 @@ data class BleUiState(
     val savedAESKey: String = BleConstants.DEFAULT_KEY,
     val hasBluetoothPermissions: Boolean = false,
     val isBluetoothEnabled: Boolean = false,
+    val backgroundServiceEnabled: Boolean = true,
+    val reconnectEnabled: Boolean = true,
+    val autoConnectEnabled: Boolean = true,
+    val autoStartEnabled: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -39,8 +46,10 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(BleUiState())
 
-    // Misma instancia que usa el widget: la conexion BLE se comparte.
-    private val repository = (application as AlarmaApplication).bleRepository
+    // Misma instancia que usan el servicio y el widget: la conexion BLE se comparte.
+    private val app = application as AlarmaApplication
+    private val repository = app.bleRepository
+    private val appSettings = app.appSettings
     val uiState: StateFlow<BleUiState> = _uiState.asStateFlow()
     
     private var scanJob: Job? = null
@@ -50,6 +59,7 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
     
     init {
         loadSavedConfig()
+        observeSettings()
         observeConnectionState()
         observeStatus()
         updateBluetoothEnabled()
@@ -62,6 +72,21 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                 savedDeviceName = repository.getSavedDeviceName(),
                 savedAESKey = repository.getSavedPassword()
             )
+        }
+    }
+
+    private fun observeSettings() {
+        viewModelScope.launch {
+            appSettings.values.collect { values ->
+                _uiState.update { state ->
+                    state.copy(
+                        backgroundServiceEnabled = values.backgroundServiceEnabled,
+                        reconnectEnabled = values.reconnectEnabled,
+                        autoConnectEnabled = values.autoConnectEnabled,
+                        autoStartEnabled = values.autoStartEnabled
+                    )
+                }
+            }
         }
     }
     
@@ -153,28 +178,88 @@ class BleViewModel(application: Application) : AndroidViewModel(application) {
                 savedAESKey = password
             )
         }
+        // Reconecta para aplicar el dispositivo/clave nuevos. El controlador
+        // decide si lo hace a traves del servicio o en modo directo.
+        BleServiceController.reconnect(app)
     }
     
     fun connectToSavedDevice() {
-        // Evita reconectar si el widget (o la app) ya inicio la conexion.
+        // Evita reconectar si el servicio o el widget ya iniciaron la conexion.
         val state = repository.connectionState.value
         if (state == BleManager.ConnectionState.CONNECTED ||
-            state == BleManager.ConnectionState.CONNECTING
+            state == BleManager.ConnectionState.CONNECTING ||
+            state == BleManager.ConnectionState.DISCONNECTING
         ) {
             return
         }
 
-        val address = _uiState.value.savedDeviceAddress
-        if (address != null) {
-            repository.connect(address)
-        }
+        if (_uiState.value.savedDeviceAddress == null) return
+        BleServiceController.connect(app)
     }
     
     fun disconnect() {
-        repository.disconnect()
+        BleServiceController.disconnect(app)
     }
 
-    fun toggleConnect() {}
+    fun toggleConnect() {
+        if (_uiState.value.isConnected) disconnect() else connectToSavedDevice()
+    }
+
+    // ---------------------------------------------------------------------
+    // Ajustes de segundo plano
+    // ---------------------------------------------------------------------
+
+    fun setBackgroundServiceEnabled(enabled: Boolean) {
+        appSettings.setBackgroundServiceEnabled(enabled)
+        if (enabled) {
+            val connected = repository.connectionState.value ==
+                BleManager.ConnectionState.CONNECTED
+            if (connected) {
+                // Si ya habia una conexion directa, el servicio la adopta.
+                BleServiceController.ensureRunning(app)
+            } else if (_uiState.value.autoConnectEnabled &&
+                _uiState.value.savedDeviceAddress != null
+            ) {
+                BleServiceController.connect(app)
+            }
+        } else {
+            BleServiceController.disconnect(app)
+        }
+    }
+
+    fun setReconnectEnabled(enabled: Boolean) {
+        appSettings.setReconnectEnabled(enabled)
+        BleServiceController.notifySettingsChanged(app)
+    }
+
+    fun setAutoConnectEnabled(enabled: Boolean) {
+        appSettings.setAutoConnectEnabled(enabled)
+    }
+
+    fun setAutoStartEnabled(enabled: Boolean) {
+        appSettings.setAutoStartEnabled(enabled)
+    }
+
+    fun shouldAskNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        return appSettings.values.value.backgroundServiceEnabled &&
+            !PermissionsManager.hasNotificationPermission(app) &&
+            !appSettings.wasNotificationPermissionAsked()
+    }
+
+    fun markNotificationPermissionAsked() {
+        appSettings.markNotificationPermissionAsked()
+    }
+
+    fun refreshNotificationIfGranted() {
+        if (PermissionsManager.hasNotificationPermission(app)) {
+            BleServiceController.refreshNotification(app)
+        }
+    }
+
+    fun refreshNotification() {
+        BleServiceController.refreshNotification(app)
+    }
     
     fun toggleLock() {
         repository.sendToggleCommand()
